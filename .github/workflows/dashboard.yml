@@ -1,1 +1,54 @@
+name: S&P-500-Dashboard
 
+on:
+  schedule:
+    - cron: "0 7-21 * * 1-5"  # Mo-Fr stündlich 07:00-21:00 UTC (deutsche Morgen- bis US-Handelszeit)
+    - cron: "30 22 * * 1-5"   # Mo-Fr 22:30 UTC, nach US-Börsenschluss
+  workflow_dispatch:           # manueller Start-Button
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - run: ls -la   # zeigt, welche Dateien im Repo liegen
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python sp500_dashboard.py --html --out=public/index.html
+      - name: Investor-Dashboard neu bauen (täglich nach Börsenschluss und bei manuellem Start)
+        if: github.event_name != 'schedule' || github.event.schedule == '30 22 * * 1-5'
+        run: python investor_dashboard.py --out=public/investor.html
+      - name: Investor-Dashboard vom letzten Stand übernehmen (stündliche Läufe)
+        if: github.event_name == 'schedule' && github.event.schedule != '30 22 * * 1-5'
+        run: |
+          for f in investor.html investor.csv; do
+            curl -fsSL "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/$f" -o "public/$f" || true
+          done
+      - run: ls -la public
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
